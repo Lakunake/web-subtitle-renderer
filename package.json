@@ -1,0 +1,30 @@
+{
+    "name": "web-subtitle-renderer",
+    "version": "1.0.0",
+    "description": "A lightweight, zero-dependency VTT and ASS subtitle renderer for web video players.",
+    "main": "index.js",
+    "type": "module",
+    "files": [
+        "index.js",
+        "README.md",
+        "LICENSE"
+    ],
+    "scripts": {
+        "test": "echo \"Error: no test specified\" && exit 1"
+    },
+    "keywords": [
+        "subtitles",
+        "vtt",
+        "ass",
+        "ssa",
+        "renderer",
+        "web-video",
+        "html5-video"
+    ],
+    "author": "Antigravity AI (and Sync-Player Contributors)",
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/ieozd/Sync-Player"
+    }
+}
