@@ -37,7 +37,6 @@ export default class SubtitleRenderer {
             console.log(`[Subtitle] Loaded ${this.cues.length} cues (${format})`);
 
             // Optional: Dispatch event or call global showTemporaryMessage if available
-            // We verify if function exists in global scope, as this library might be used elsewhere
             if (typeof window.showTemporaryMessage === 'function') {
                 window.showTemporaryMessage(`Subtitles loaded: ${this.cues.length} lines`, 3000);
             }
@@ -207,11 +206,26 @@ export default class SubtitleRenderer {
                     let rawText = event['Text'];
 
                     // Handle override tags
-                    // We will extract strictly position and alignment for now, simplify the rest
                     // Complex rendering requires drawing to Canvas or generating complex DOM.
                     // We will use DOM for now.
 
                     const overrides = this.parseOverrides(rawText);
+
+                    // Basic Karaoke Processing
+                    // Replace {\kXY}Text with <span class="karaoke-text" data-duration="XY">Text</span>
+                    // This is a naive implementation.
+                    let processedText = rawText;
+                    let isKaraoke = false;
+
+                    // Regex to find \k tags and the text following them until next tag or end
+                    if (/\\k[fo]?\d+/.test(rawText)) {
+                        isKaraoke = true;
+                        // We need to strip other tags for the clean text, BUT keep K tags for processing.
+                        // Simplification: Standardize to internal format
+                        // Not implemented fully in this pass to avoid breaking standard rendering
+                        // Instead, we just strip K tags for 'text' and keep them in 'html' if we were to support it.
+                    }
+
                     const cleanText = rawText.replace(/{[^}]+}/g, '').replace(/\\N/g, '<br>').replace(/\\n/g, ' ');
 
                     this.cues.push({
@@ -243,11 +257,67 @@ export default class SubtitleRenderer {
             overrides.alignment = parseInt(anMatch[1]);
         }
 
-        // Check for \c&HBBGGRR& - Color (Primary)
         const cMatch = text.match(/\\c&H([0-9a-fA-F]+)&/);
         if (cMatch) {
             overrides.color = this.assColorToCss(cMatch[1]);
         }
+
+        // Check for \fad(t1, t2) - Fade
+        const fadMatch = text.match(/\\fad\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)/);
+        if (fadMatch) {
+            overrides.fade = { t1: parseInt(fadMatch[1]), t2: parseInt(fadMatch[2]) };
+        }
+
+        // Check for \move(x1, y1, x2, y2, [t1, t2])
+        // Regex handles optional t1, t2
+        const moveMatch = text.match(/\\move\s*\(\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)(?:,\s*(\d+)\s*,\s*(\d+))?\s*\)/);
+        if (moveMatch) {
+            overrides.move = {
+                x1: parseFloat(moveMatch[1]),
+                y1: parseFloat(moveMatch[2]),
+                x2: parseFloat(moveMatch[3]),
+                y2: parseFloat(moveMatch[4]),
+                t1: moveMatch[5] !== undefined ? parseInt(moveMatch[5]) : undefined,
+                t2: moveMatch[6] !== undefined ? parseInt(moveMatch[6]) : undefined
+            };
+        }
+
+        // Check for Rotation \frx, \fry, \frz (or \fr)
+        const frxMatch = text.match(/\\frx(-?[\d.]+)/);
+        const fryMatch = text.match(/\\fry(-?[\d.]+)/);
+        const frzMatch = text.match(/\\frz(-?[\d.]+)/);
+        const frMatch = text.match(/\\fr(-?[\d.]+)/); // Defaults to Z
+
+        if (frxMatch || fryMatch || frzMatch || frMatch) {
+            overrides.rotation = {
+                x: frxMatch ? parseFloat(frxMatch[1]) : 0,
+                y: fryMatch ? parseFloat(fryMatch[1]) : 0,
+                z: frzMatch ? parseFloat(frzMatch[1]) : (frMatch ? parseFloat(frMatch[1]) : 0)
+            };
+        }
+
+        // Check for Styling Overrides: \bord, \shad, \blur, \fs, \fn
+        const bordMatch = text.match(/\\bord(-?[\d.]+)/);
+        if (bordMatch) overrides.border = parseFloat(bordMatch[1]);
+
+        const shadMatch = text.match(/\\shad(-?[\d.]+)/);
+        if (shadMatch) overrides.shadow = parseFloat(shadMatch[1]);
+
+        const blurMatch = text.match(/\\blur(-?[\d.]+)/);
+        if (blurMatch) overrides.blur = parseFloat(blurMatch[1]);
+
+        const fsMatch = text.match(/\\fs(\d+)/);
+        if (fsMatch) overrides.fontSize = parseInt(fsMatch[1]);
+
+        const fnMatch = text.match(/\\fn([^\\}]+)/);
+        if (fnMatch) overrides.fontName = fnMatch[1];
+
+        // Karaoke split logic (simplified)
+        // \k10\k20 -> we won't fully highlight, just identifying presence
+        // Real karaoke requires splitting the text node into spans.
+        // We will attempt a basic parse: replace {\kXX}text with <span data-k="XX">text</span>
+        // This is complex because overrides return an object, but karaoke changes the text structure.
+        // We'll handle K-tag stripping in the main loop but flag it here if needed.
 
         return overrides;
     }
@@ -313,6 +383,59 @@ export default class SubtitleRenderer {
             this.activeCues = active;
             this.render();
         }
+
+        // Apply animations (Fade, etc) every frame
+        this.applyAnimations(time);
+    }
+
+    applyAnimations(time) {
+        if (this.activeCues.length === 0) return;
+        const children = this.overlay.children;
+
+        for (let i = 0; i < this.activeCues.length; i++) {
+            const cue = this.activeCues[i];
+            const div = children[i];
+            if (!div) continue;
+
+            // Handle Fade (\fad)
+            if (cue.overrides && cue.overrides.fade) {
+                const { t1, t2 } = cue.overrides.fade;
+                let opacity = 1;
+                const elapsed = (time - cue.start) * 1000; // ms
+                const remaining = (cue.end - time) * 1000;
+
+                if (elapsed < t1) opacity = elapsed / t1;
+                else if (remaining < t2) opacity = remaining / t2;
+
+                div.style.opacity = Math.max(0, Math.min(1, opacity));
+            }
+
+            // Handle Move (\move)
+            if (cue.overrides && cue.overrides.move && this.activeScaleX && this.activeScaleY) {
+                const { x1, y1, x2, y2, t1, t2 } = cue.overrides.move;
+                const duration = (cue.end - cue.start) * 1000;
+                // If t1/t2 not specified, move over full duration
+                const startTime = (t1 !== undefined) ? t1 : 0;
+                const endTime = (t2 !== undefined) ? t2 : duration;
+
+                const elapsed = (time - cue.start) * 1000;
+                let progress = 0;
+
+                if (endTime > startTime) {
+                    if (elapsed <= startTime) progress = 0;
+                    else if (elapsed >= endTime) progress = 1;
+                    else progress = (elapsed - startTime) / (endTime - startTime);
+                } else {
+                    progress = 1; // Instant move?
+                }
+
+                const currentX = x1 + (x2 - x1) * progress;
+                const currentY = y1 + (y2 - y1) * progress;
+
+                div.style.left = (currentX * this.activeScaleX) + 'px';
+                div.style.top = (currentY * this.activeScaleY) + 'px';
+            }
+        }
     }
 
     render() {
@@ -336,6 +459,9 @@ export default class SubtitleRenderer {
             // Most renderers use one scale factor for fonts to avoid distortion, usually based on Height or Width
             // We'll use Y for font sizes
         }
+
+        this.activeScaleX = scaleX;
+        this.activeScaleY = scaleY;
 
         this.activeCues.forEach(cue => {
             const div = document.createElement('div');
@@ -363,10 +489,66 @@ export default class SubtitleRenderer {
                 // Default alignment
                 let alignment = parseInt(style.Alignment) || 2; // Default bottom-center
 
-                // Overrides
                 if (cue.overrides) {
                     if (cue.overrides.alignment) alignment = cue.overrides.alignment;
-                    if (cue.overrides.pos) {
+
+                    // Font Overrides
+                    if (cue.overrides.fontSize) div.style.fontSize = (cue.overrides.fontSize * scaleY) + 'px';
+                    if (cue.overrides.fontName) div.style.fontFamily = cue.overrides.fontName;
+
+                    // 3D Rotation
+                    if (cue.overrides.rotation) {
+                        const { x, y, z } = cue.overrides.rotation;
+                        // To work, parent needs perspective. We add it to the div itself or we rely on flattened 3d?
+                        // Adding perspective to the element usually works for self-rotation
+                        div.style.transformStyle = 'preserve-3d';
+                        // We will append rotation to the transform string later or here
+                        // Note: Transform is overwritten by positioning functions. We must merge them.
+                        div.dataset.rotation = `rotateX(${x}deg) rotateY(${y}deg) rotateZ(${z}deg)`;
+                    }
+
+                    // Border/Shadow/Blur Overrides
+                    let currentOutline = outlineWidth;
+                    let currentShadow = style.BackColour ? 1 : 0; // heuristic
+                    let currentBlur = 0;
+
+                    if (cue.overrides.border !== undefined) currentOutline = cue.overrides.border * scaleX;
+                    if (cue.overrides.shadow !== undefined) currentShadow = cue.overrides.shadow * scaleX;
+                    if (cue.overrides.blur !== undefined) currentBlur = cue.overrides.blur;
+
+                    if (currentBlur > 0) {
+                        div.style.filter = `blur(${currentBlur}px)`;
+                    }
+
+                    // Re-apply shadow/outline with overrides
+                    if (currentOutline > 0 || currentShadow > 0) {
+                        const c = outlineColor;
+                        const s = shadowColor;
+                        const o = currentOutline;
+                        // Combined text-shadow for outline
+                        let shadowStr = '';
+                        if (o > 0) {
+                            shadowStr += `-${o}px -${o}px 0 ${c}, ${o}px -${o}px 0 ${c}, -${o}px ${o}px 0 ${c}, ${o}px ${o}px 0 ${c}`;
+                        }
+                        if (currentShadow > 0) {
+                            if (shadowStr) shadowStr += ', ';
+                            shadowStr += `${currentShadow}px ${currentShadow}px ${currentBlur}px ${s}`;
+                        }
+                        div.style.textShadow = shadowStr;
+                    }
+
+                    // Priority: Move > Pos > Standard
+                    if (cue.overrides.move) {
+                        // Initial pos is x1, y1
+                        div.style.position = 'absolute';
+                        div.style.left = (cue.overrides.move.x1 * scaleX) + 'px';
+                        div.style.top = (cue.overrides.move.y1 * scaleY) + 'px';
+                        this.applyAlignmentTransform(div, alignment);
+
+                        if (cue.overrides.color) div.style.color = cue.overrides.color;
+                        else div.style.color = color;
+                    }
+                    else if (cue.overrides.pos) {
                         // Absolute positioning (Explicit)
                         div.style.position = 'absolute';
                         div.style.left = (cue.overrides.pos.x * scaleX) + 'px';
@@ -427,7 +609,15 @@ export default class SubtitleRenderer {
             case 9: tx = '-100%'; ty = '0%'; break; // Top Right
         }
 
-        element.style.transform = `translate(${tx}, ${ty})`;
+        let transform = `translate(${tx}, ${ty})`;
+        if (element.dataset.rotation) {
+            transform += ' ' + element.dataset.rotation;
+            // Add perspective to parent to make 3D effect visible?
+            // Or just adds perspective to element.
+            // 800px is a reasonable default perspective
+            element.style.perspective = '800px';
+        }
+        element.style.transform = transform;
     }
 
     applyFlexAlignment(element, alignment, style, scaleX, scaleY) {
@@ -480,9 +670,15 @@ export default class SubtitleRenderer {
 
             // Remove transform X since we are using width 100%
             if (element.style.transform && element.style.transform.includes('translateY')) {
-                // Keep Y transform if it exists
+                if (element.dataset.rotation) {
+                    element.style.transform += ' ' + element.dataset.rotation;
+                }
             } else if (element.style.transform) {
-                element.style.transform = element.style.transform.replace(/translateX\([^)]+\)/, '');
+                let t = element.style.transform.replace(/translateX\([^)]+\)/, '');
+                if (element.dataset.rotation) t += ' ' + element.dataset.rotation;
+                element.style.transform = t;
+            } else if (element.dataset.rotation) {
+                element.style.transform = element.dataset.rotation;
             }
         }
     }
