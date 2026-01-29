@@ -35,7 +35,6 @@ export default class SubtitleRenderer {
             this.update(); // Initial render
             this.resize(); // Initial resize
             console.log(`[Subtitle] Loaded ${this.cues.length} cues (${format})`);
-
             // Optional: Dispatch event or call global showTemporaryMessage if available
             if (typeof window.showTemporaryMessage === 'function') {
                 window.showTemporaryMessage(`Subtitles loaded: ${this.cues.length} lines`, 3000);
@@ -119,8 +118,13 @@ export default class SubtitleRenderer {
             }
 
             if (section === '[Script Info]') {
-                if (line.startsWith('PlayResX:')) this.assParams.playResX = parseInt(line.split(':')[1]);
-                if (line.startsWith('PlayResY:')) this.assParams.playResY = parseInt(line.split(':')[1]);
+                const parts = line.split(':');
+                if (parts.length >= 2) {
+                    const key = parts[0].trim();
+                    const value = parts[1].trim();
+                    if (key === 'PlayResX') this.assParams.playResX = parseInt(value);
+                    if (key === 'PlayResY') this.assParams.playResY = parseInt(value);
+                }
             }
             else if (section === '[V4+ Styles]' || section === '[V4 Styles]') {
                 if (line.startsWith('Format:')) {
@@ -270,7 +274,7 @@ export default class SubtitleRenderer {
 
         // Check for \move(x1, y1, x2, y2, [t1, t2])
         // Regex handles optional t1, t2
-        const moveMatch = text.match(/\\move\s*\(\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)(?:,\s*(\d+)\s*,\s*(\d+))?\s*\)/);
+        const moveMatch = text.match(/\\move\s*\(\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)(?:\s*,\s*(\d+)\s*,\s*(\d+))?\s*\)/);
         if (moveMatch) {
             overrides.move = {
                 x1: parseFloat(moveMatch[1]),
@@ -388,62 +392,13 @@ export default class SubtitleRenderer {
         this.applyAnimations(time);
     }
 
-    applyAnimations(time) {
-        if (this.activeCues.length === 0) return;
-        const children = this.overlay.children;
-
-        for (let i = 0; i < this.activeCues.length; i++) {
-            const cue = this.activeCues[i];
-            const div = children[i];
-            if (!div) continue;
-
-            // Handle Fade (\fad)
-            if (cue.overrides && cue.overrides.fade) {
-                const { t1, t2 } = cue.overrides.fade;
-                let opacity = 1;
-                const elapsed = (time - cue.start) * 1000; // ms
-                const remaining = (cue.end - time) * 1000;
-
-                if (elapsed < t1) opacity = elapsed / t1;
-                else if (remaining < t2) opacity = remaining / t2;
-
-                div.style.opacity = Math.max(0, Math.min(1, opacity));
-            }
-
-            // Handle Move (\move)
-            if (cue.overrides && cue.overrides.move && this.activeScaleX && this.activeScaleY) {
-                const { x1, y1, x2, y2, t1, t2 } = cue.overrides.move;
-                const duration = (cue.end - cue.start) * 1000;
-                // If t1/t2 not specified, move over full duration
-                const startTime = (t1 !== undefined) ? t1 : 0;
-                const endTime = (t2 !== undefined) ? t2 : duration;
-
-                const elapsed = (time - cue.start) * 1000;
-                let progress = 0;
-
-                if (endTime > startTime) {
-                    if (elapsed <= startTime) progress = 0;
-                    else if (elapsed >= endTime) progress = 1;
-                    else progress = (elapsed - startTime) / (endTime - startTime);
-                } else {
-                    progress = 1; // Instant move?
-                }
-
-                const currentX = x1 + (x2 - x1) * progress;
-                const currentY = y1 + (y2 - y1) * progress;
-
-                div.style.left = (currentX * this.activeScaleX) + 'px';
-                div.style.top = (currentY * this.activeScaleY) + 'px';
-            }
-        }
-    }
-
     render() {
         this.overlay.innerHTML = '';
         if (this.activeCues.length === 0) return;
 
-        const containerWidth = this.video.clientWidth || window.innerWidth;
-        const containerHeight = this.video.clientHeight || window.innerHeight;
+        // Overlay is now sized to the video content, so we use its dims
+        const containerWidth = this.overlay.clientWidth;
+        const containerHeight = this.overlay.clientHeight;
 
         // Calculate scaling factor
         // ASS coordinates are based on PlayResX/Y
@@ -484,6 +439,7 @@ export default class SubtitleRenderer {
                 const shadowColor = style.BackColour ? this.assColorToCss(style.BackColour) : 'rgba(0,0,0,0.5)';
                 const bold = style.Bold === '-1' || style.Bold === '1';
                 const italic = style.Italic === '-1' || style.Italic === '1';
+                const outlineWidth = (parseFloat(style.Outline) || 2) * scaleX;
 
                 // Positioning
                 // Default alignment
@@ -577,7 +533,8 @@ export default class SubtitleRenderer {
                 if (italic) div.style.fontStyle = 'italic';
 
                 // Outline/Shadow
-                const outlineWidth = (parseInt(style.Outline) || 1) * scaleX;
+                // Already defined above: outlineWidth
+
                 // CSS text-stroke is non-standard but widely supported. Text-shadow is safer.
                 // Simulating outline with text-shadow
                 if (outlineWidth > 0) {
@@ -684,7 +641,42 @@ export default class SubtitleRenderer {
     }
 
     resize() {
-        // Re-render to update scaling
+        if (!this.video || !this.overlay) return;
+
+        // Calculate real video dimensions (content rect)
+        const vidW = this.video.videoWidth;
+        const vidH = this.video.videoHeight;
+        if (!vidW || !vidH) return; // Video not loaded yet
+
+        const containerW = this.video.clientWidth || window.innerWidth;
+        const containerH = this.video.clientHeight || window.innerHeight;
+
+        const vidRatio = vidW / vidH;
+        const containerRatio = containerW / containerH;
+
+        let realW, realH, osX, osY;
+
+        if (containerRatio > vidRatio) {
+            // Container is wider (Pillarbox)
+            realH = containerH;
+            realW = realH * vidRatio;
+            osX = (containerW - realW) / 2;
+            osY = 0;
+        } else {
+            // Container is taller (Letterbox)
+            realW = containerW;
+            realH = realW / vidRatio;
+            osX = 0;
+            osY = (containerH - realH) / 2;
+        }
+
+        // Apply to overlay
+        this.overlay.style.width = `${realW}px`;
+        this.overlay.style.height = `${realH}px`;
+        this.overlay.style.left = `${osX}px`;
+        this.overlay.style.top = `${osY}px`;
+
+        // Re-render to update scaling with new Overlay dimensions
         if (this.activeCues.length > 0) {
             this.render();
         }
