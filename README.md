@@ -1,7 +1,7 @@
 npm page: https://www.npmjs.com/package/web-subtitle-renderer
 
-> [NOTE!]
-> this is a side project to me so don't expect frequent updates and whatnot. this project updates as long as [Sync-Player](https://github.com/Lakunake/Minecraft-WebDisplays-Sync-Player/) updates and will get delayed updates compared to the embedded version of this in Sync-Player, newest version of this will always be the embedded version
+> [!NOTE]
+> this is a side project to me so don't expect frequent updates and whatnot. this project updates as long as [Sync-Player](https://github.com/Lakunake/Minecraft-WebDisplays-Sync-Player/) updates and will get delayed updates compared to the [embedded version](https://github.com/Lakunake/Minecraft-WebDisplays-Sync-Player/blob/main/res/js/subtitles.js) of this in Sync-Player, newest version of this will always be the embedded version
 
 # Web Subtitle Renderer
 
