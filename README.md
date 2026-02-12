@@ -1,7 +1,11 @@
 npm page: https://www.npmjs.com/package/web-subtitle-renderer
+
+> [NOTE!]
+> this is a side project to me so don't expect frequent updates and whatnot. this project updates as long as [Sync-Player](https://github.com/Lakunake/Minecraft-WebDisplays-Sync-Player/) updates and will get delayed updates compared to the embedded version of this in Sync-Player, newest version of this will always be the embedded version
+
 # Web Subtitle Renderer
 
-A lightweight, zero-dependency VTT and ASS (Advanced Substation Alpha) subtitle renderer for standard HTML5 `<video>` elements. Made to be used in [Sync-Player](https://github.com/Lakunake/Minecraft-WebDisplays-Sync-Player/) originally.
+A lightweight, zero-dependency VTT and ASS (Advanced Substation Alpha) subtitle renderer for standard HTML5 `<video>` elements. Made to be used in Sync-Player originally.
 
 ## Features
 
