@@ -1,6 +1,6 @@
 {
     "name": "web-subtitle-renderer",
-    "version": "1.3.0",
+    "version": "1.4.0",
     "description": "A lightweight, zero-dependency VTT and ASS subtitle renderer for web video players.",
     "main": "index.js",
     "type": "module",
