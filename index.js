@@ -85,17 +85,44 @@ export default class SubtitleRenderer {
                 let payload = [];
                 i++;
                 while (i < lines.length && lines[i].trim() !== '') {
-                    payload.push(lines[i]); // Keep html tags for now
+                    const lineStr = lines[i];
+                    // Filter ASS drawing commands often found in raw VTT extractions
+                    // Pattern: 'm <coords> ...'
+                    if (/^m\s+-?\d+/.test(lineStr.trim())) {
+                        console.warn(`[VTT-Debug] Ignored drawing line: "${lineStr.substring(0, 50)}..."`);
+                    } else {
+                        payload.push(lineStr);
+                    }
                     i++;
                 }
+
+                if (payload.length === 0) {
+                    console.warn(`[VTT-Debug] Skipped cue with no valid payload at ${start} --> ${end}`);
+                    continue;
+                }
+
+                const textContent = payload.join('<br>');
+
+                // Deduplicate consecutive identical cues
+                let isDuplicate = false;
+                if (this.cues.length > 0) {
+                    const last = this.cues[this.cues.length - 1];
+                    if (last.start === start && last.end === end && last.text === textContent) {
+                        console.log(`[VTT-Debug] Deduplicated cue: ${start} --> ${end}`);
+                        isDuplicate = true;
+                    }
+                }
+
+                if (isDuplicate) continue;
 
                 this.cues.push({
                     start,
                     end,
-                    text: payload.join('<br>'),
-                    html: payload.join('<br>').replace(/<v [^>]+>/g, '').replace(/<\/v>/g, ''), // Basic strip of voice tags
+                    text: textContent,
+                    html: textContent.replace(/<v [^>]+>/g, '').replace(/<\/v>/g, ''), // Basic strip of voice tags
                     format: 'vtt'
                 });
+                console.log(`[VTT-Debug] Accepted: ${start} --> ${end} : "${textContent.substring(0, 30)}..."`);
             } else {
                 i++;
             }
@@ -384,12 +411,64 @@ export default class SubtitleRenderer {
         const currentKeys = this.activeCues.map(c => c.rawText + c.start).join('|');
 
         if (activeKeys !== currentKeys) {
+            const firstText = active.length > 0 ? active[0].text.substring(0, 30).replace(/<[^>]*>/g, '') + '...' : 'None';
+            console.log(`[SubtitleRenderer] Active cues changed: ${active.length} active. First: "${firstText}"`);
             this.activeCues = active;
             this.render();
         }
 
         // Apply animations (Fade, etc) every frame
         this.applyAnimations(time);
+    }
+
+    applyAnimations(time) {
+        if (this.activeCues.length === 0) return;
+        const children = this.overlay.children;
+
+        for (let i = 0; i < this.activeCues.length; i++) {
+            const cue = this.activeCues[i];
+            const div = children[i];
+            if (!div) continue;
+
+            // Handle Fade (\fad)
+            if (cue.overrides && cue.overrides.fade) {
+                const { t1, t2 } = cue.overrides.fade;
+                let opacity = 1;
+                const elapsed = (time - cue.start) * 1000; // ms
+                const remaining = (cue.end - time) * 1000;
+
+                if (elapsed < t1) opacity = elapsed / t1;
+                else if (remaining < t2) opacity = remaining / t2;
+
+                div.style.opacity = Math.max(0, Math.min(1, opacity));
+            }
+
+            // Handle Move (\move)
+            if (cue.overrides && cue.overrides.move && this.activeScaleX && this.activeScaleY) {
+                const { x1, y1, x2, y2, t1, t2 } = cue.overrides.move;
+                const duration = (cue.end - cue.start) * 1000;
+                // If t1/t2 not specified, move over full duration
+                const startTime = (t1 !== undefined) ? t1 : 0;
+                const endTime = (t2 !== undefined) ? t2 : duration;
+
+                const elapsed = (time - cue.start) * 1000;
+                let progress = 0;
+
+                if (endTime > startTime) {
+                    if (elapsed <= startTime) progress = 0;
+                    else if (elapsed >= endTime) progress = 1;
+                    else progress = (elapsed - startTime) / (endTime - startTime);
+                } else {
+                    progress = 1; // Instant move?
+                }
+
+                const currentX = x1 + (x2 - x1) * progress;
+                const currentY = y1 + (y2 - y1) * progress;
+
+                div.style.left = (currentX * this.activeScaleX) + 'px';
+                div.style.top = (currentY * this.activeScaleY) + 'px';
+            }
+        }
     }
 
     render() {
